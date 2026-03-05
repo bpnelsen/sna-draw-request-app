@@ -105,6 +105,16 @@ export default function UploadPage() {
             Upload an Excel file to reorganize by SN Loan # with automatic totals per lot.
           </p>
 
+          {/* Info Banner */}
+          <div className="mb-8 p-4 bg-blue-50 border-l-4 border-sna-navy rounded">
+            <p className="text-sm text-sna-navy font-semibold">
+              📝 MVP Note: For production file processing, run the Python script locally or on your VPS.
+            </p>
+            <p className="text-xs text-sna-navy/70 mt-1">
+              Download the script: <code className="bg-white px-2 py-1 rounded font-mono">reorganize_sna_draw_request.py</code>
+            </p>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Drag Drop Zone */}
             <div

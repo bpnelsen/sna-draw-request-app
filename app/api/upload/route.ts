@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
-import { existsSync } from 'fs';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 
-const execAsync = promisify(exec);
-
+/**
+ * POST /api/upload
+ * Accepts Excel file upload and queues it to VPS backend for processing
+ */
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
@@ -27,55 +24,76 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Convert file to buffer
+    // Convert file to base64
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-
-    // Create uploads directory
-    const uploadsDir = join(process.cwd(), 'public', 'uploads');
-    const resultsDir = join(process.cwd(), 'public', 'results');
-    
-    if (!existsSync(uploadsDir)) {
-      await mkdir(uploadsDir, { recursive: true });
-    }
-    if (!existsSync(resultsDir)) {
-      await mkdir(resultsDir, { recursive: true });
-    }
+    const fileData = buffer.toString('base64');
 
     // Generate unique filename
     const timestamp = Date.now();
-    const inputFileName = `${timestamp}_${file.name}`;
-    const outputFileName = `${timestamp}_organized_${file.name}`;
-    const inputPath = join(uploadsDir, inputFileName);
-    const outputPath = join(resultsDir, outputFileName);
+    const fileName = `${timestamp}_${file.name}`;
 
-    // Save uploaded file
-    await writeFile(inputPath, buffer);
+    // Get VPS backend URL and API key from environment
+    const vpsBackendUrl = process.env.VPS_BACKEND_URL || 'http://localhost:3001';
+    const apiKey = process.env.SNA_API_KEY || 'default-key';
 
-    // Call Python script on VPS
+    // Queue file to VPS backend
+    const callbackUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000'}/api/process-complete`;
+
     try {
-      // This would call the Python script via SSH or HTTP endpoint on your VPS
-      // For now, we'll simulate it
-      const pythonScriptPath = '/data/.openclaw/workspace/sna-script/reorganize_sna_draw_request.py';
-      
-      // Execute Python script
-      await execAsync(`python3 ${pythonScriptPath} "${inputPath}" "${outputPath}"`);
+      const response = await fetch(`${vpsBackendUrl}/process`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({
+          fileName,
+          fileData,
+          callbackUrl,
+        }),
+      });
 
-      // Return download URL
+      const result = await response.json();
+
+      if (!response.ok) {
+        return NextResponse.json(
+          { error: result.error || 'Processing failed' },
+          { status: 500 }
+        );
+      }
+
+      // Save to history
+      await fetch(new URL('/api/history', req.url), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName,
+          originalFileName: file.name,
+          status: 'completed',
+          downloadUrl: `/api/download/${result.fileName}`,
+        }),
+      }).catch((err) => console.warn('Failed to save history:', err));
+
       return NextResponse.json({
         success: true,
-        fileName: outputFileName,
-        downloadUrl: `/results/${outputFileName}`,
-        message: 'File processed successfully',
+        fileName: result.fileName,
+        downloadUrl: `/api/download/${result.fileName}`,
+        message: 'File processed successfully!',
+        processedData: result.fileData, // Base64 encoded processed file
       });
-    } catch (pythonError) {
-      console.error('Python script error:', pythonError);
-      
-      // Return more helpful error message
-      return NextResponse.json(
-        { error: 'Failed to process file. Ensure the Excel file has the correct format.' },
-        { status: 500 }
-      );
+    } catch (backendErr) {
+      console.error('VPS backend error:', backendErr);
+
+      // Fallback: Return file for local processing
+      return NextResponse.json({
+        success: false,
+        error: 'VPS backend unavailable',
+        message: 'VPS backend is not responding. Please ensure the server is running.',
+        fileName,
+        fileData, // Return file data for debugging
+        note: 'Run the VPS server: node /path/to/server.js',
+      }, { status: 503 });
     }
   } catch (error) {
     console.error('Upload error:', error);
