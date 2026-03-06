@@ -2,8 +2,7 @@ import ExcelJS from 'exceljs';
 
 /**
  * Process SNA Draw Request Excel file
- * Reorganizes by SN Loan # (Column G) with subtotals per lot
- * Matches the original Python script format exactly
+ * Creates separate tabs for each lot, alphabetically ordered
  */
 export async function processSNAExcel(
   fileBuffer: Buffer,
@@ -46,9 +45,10 @@ export async function processSNAExcel(
       }
     }
 
-    // Create new workbook with reorganized data
+    // Create new workbook with separate tabs for each lot
     const outputWorkbook = new ExcelJS.Workbook();
-    const outputWorksheet = outputWorkbook.addWorksheet('Reorganized');
+    // Remove default sheet
+    outputWorkbook.removeWorksheet(outputWorkbook.worksheets[0].id);
 
     // Define styles
     const headerFill = {
@@ -57,12 +57,6 @@ export async function processSNAExcel(
       fgColor: { argb: 'FF0F3A7D' }, // Navy blue
     };
     const headerFont = { bold: true, color: { argb: 'FFFFFFFF' } };
-    const lotHeaderFill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FF06B6D4' }, // Cyan/Teal
-    };
-    const lotHeaderFont = { bold: true, color: { argb: 'FFFFFFFF' } };
     const subtotalFill = {
       type: 'pattern',
       pattern: 'solid',
@@ -76,41 +70,36 @@ export async function processSNAExcel(
       bottom: { style: 'thin' as const },
     };
 
-    // Write headers
-    let colNum = 1;
-    for (const [colIdx, header] of Object.entries(headers)) {
-      const cell = outputWorksheet.getCell(1, colNum);
-      cell.value = header;
-      // @ts-ignore
-      cell.fill = headerFill;
-      // @ts-ignore
-      cell.font = headerFont;
-      // @ts-ignore
-      cell.alignment = { horizontal: 'middle', vertical: 'middle' };
-      // @ts-ignore
-      cell.border = border;
-      colNum++;
-    }
-
-    // Write data by lot
-    let currentRow = 2;
-    const lotTotals: Record<string, number> = {};
     const numHeaders = Object.keys(headers).length;
+    let lotTotal = 0;
 
+    // Create a sheet for each lot (sorted alphabetically)
     for (const lotName of Object.keys(dataByLot).sort()) {
       const lotData = dataByLot[lotName];
-      let lotTotal = 0;
 
-      // Write lot header
-      const lotHeaderCell = outputWorksheet.getCell(currentRow, 1);
-      lotHeaderCell.value = `=== ${lotName} ===`;
-      // @ts-ignore
-      lotHeaderCell.font = lotHeaderFont;
-      // @ts-ignore
-      lotHeaderCell.fill = lotHeaderFill;
-      currentRow++;
+      // Create worksheet for this lot
+      const outputWorksheet = outputWorkbook.addWorksheet(lotName);
+
+      // Write headers
+      let colNum = 1;
+      for (const [colIdx, header] of Object.entries(headers)) {
+        const cell = outputWorksheet.getCell(1, colNum);
+        cell.value = header;
+        // @ts-ignore
+        cell.fill = headerFill;
+        // @ts-ignore
+        cell.font = headerFont;
+        // @ts-ignore
+        cell.alignment = { horizontal: 'middle', vertical: 'middle' };
+        // @ts-ignore
+        cell.border = border;
+        colNum++;
+      }
 
       // Write data rows for this lot
+      let currentRow = 2;
+      lotTotal = 0;
+
       for (const dataRow of lotData) {
         let colIndex = 1;
         dataRow.eachCell((cell, colNumber) => {
@@ -155,30 +144,10 @@ export async function processSNAExcel(
       // @ts-ignore
       subtotalAmountCol.fill = subtotalFill;
 
-      lotTotals[lotName] = lotTotal;
-      currentRow += 2; // Blank line between lots
-    }
-
-    // Write grand total
-    const grandTotalRow = outputWorksheet.getRow(currentRow);
-    const grandTotalLabel = grandTotalRow.getCell(7);
-    grandTotalLabel.value = 'GRAND TOTAL:';
-    // @ts-ignore
-    grandTotalLabel.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    // @ts-ignore
-    grandTotalLabel.fill = headerFill;
-
-    const grandTotal = Object.values(lotTotals).reduce((sum, val) => sum + val, 0);
-    const grandTotalAmount = grandTotalRow.getCell(8);
-    grandTotalAmount.value = grandTotal;
-    // @ts-ignore
-    grandTotalAmount.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    // @ts-ignore
-    grandTotalAmount.fill = headerFill;
-
-    // Set column widths
-    for (let i = 1; i <= numHeaders; i++) {
-      outputWorksheet.getColumn(i).width = 20;
+      // Set column widths
+      for (let i = 1; i <= numHeaders; i++) {
+        outputWorksheet.getColumn(i).width = 20;
+      }
     }
 
     // Generate output buffer
