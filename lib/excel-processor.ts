@@ -1,5 +1,4 @@
 import ExcelJS from 'exceljs';
-import { Readable } from 'stream';
 
 /**
  * Process SNA Draw Request Excel file
@@ -12,7 +11,8 @@ export async function processSNAExcel(
   try {
     // Load input workbook
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(fileBuffer);
+    const uint8Array = new Uint8Array(fileBuffer);
+    await workbook.xlsx.load(uint8Array);
     
     const worksheet = workbook.getWorksheet(1);
     if (!worksheet) {
@@ -122,7 +122,7 @@ export async function processSNAExcel(
 
     // Generate output buffer
     const outputBuffer = await outputWorkbook.xlsx.writeBuffer();
-    return Buffer.from(outputBuffer);
+    return Buffer.from(outputBuffer as any);
   } catch (error) {
     console.error('Excel processing error:', error);
     throw new Error(`Failed to process Excel file: ${error instanceof Error ? error.message : 'Unknown error'}`);
