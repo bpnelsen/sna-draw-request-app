@@ -9,10 +9,13 @@ export async function processSNAExcel(
   originalFileName: string
 ): Promise<Buffer> {
   try {
+    console.log('🔄 Starting Excel processing...');
+    
     // Load input workbook
     const workbook = new ExcelJS.Workbook();
     // @ts-ignore - exceljs type definitions have issues with Buffer
     await workbook.xlsx.load(fileBuffer);
+    console.log('✅ Workbook loaded');
 
     const worksheet = workbook.getWorksheet(1);
     if (!worksheet) {
@@ -20,16 +23,21 @@ export async function processSNAExcel(
     }
 
     // Read headers (Row 1)
-    const headers: Record<number, string> = {};
+    const headers: any[] = [];
     const headerRow = worksheet.getRow(1);
+    let maxCol = 0;
+    
     headerRow.eachCell((cell, colNumber) => {
       if (cell.value) {
-        headers[colNumber] = String(cell.value);
+        headers[colNumber - 1] = cell.value;
+        maxCol = Math.max(maxCol, colNumber);
       }
     });
+    
+    console.log(`✅ Found ${maxCol} columns`);
 
     // Group data by SN Loan # (Column G = 7)
-    const dataByLot: Record<string, ExcelJS.Row[]> = {};
+    const dataByLot: Record<string, any[][]> = {};
     const startRow = 2;
 
     for (let rowNum = startRow; rowNum <= worksheet.rowCount; rowNum++) {
@@ -41,25 +49,35 @@ export async function processSNAExcel(
         if (!dataByLot[lotName]) {
           dataByLot[lotName] = [];
         }
-        dataByLot[lotName].push(row);
+
+        // Read row data as values array
+        const rowData: any[] = [];
+        for (let col = 1; col <= maxCol; col++) {
+          rowData.push(row.getCell(col).value);
+        }
+        dataByLot[lotName].push(rowData);
       }
     }
+
+    console.log(`✅ Found ${Object.keys(dataByLot).length} lots`);
 
     // Create new workbook with separate tabs for each lot
     const outputWorkbook = new ExcelJS.Workbook();
     // Remove default sheet
-    outputWorkbook.removeWorksheet(outputWorkbook.worksheets[0].id);
+    if (outputWorkbook.worksheets.length > 0) {
+      outputWorkbook.removeWorksheet(outputWorkbook.worksheets[0].id);
+    }
 
     // Define styles
     const headerFill = {
-      type: 'pattern',
-      pattern: 'solid',
+      type: 'pattern' as const,
+      pattern: 'solid' as const,
       fgColor: { argb: 'FF0F3A7D' }, // Navy blue
     };
     const headerFont = { bold: true, color: { argb: 'FFFFFFFF' } };
     const subtotalFill = {
-      type: 'pattern',
-      pattern: 'solid',
+      type: 'pattern' as const,
+      pattern: 'solid' as const,
       fgColor: { argb: 'FFE8F0FE' }, // Light blue
     };
     const subtotalFont = { bold: true };
@@ -70,21 +88,20 @@ export async function processSNAExcel(
       bottom: { style: 'thin' as const },
     };
 
-    const numHeaders = Object.keys(headers).length;
-
     // Create a sheet for each lot (sorted alphabetically)
     for (const lotName of Object.keys(dataByLot).sort()) {
       const lotData = dataByLot[lotName];
-      let lotTotal = 0; // Reset for each lot
+      let lotTotal = 0;
+
+      console.log(`📝 Creating sheet for lot: ${lotName}`);
 
       // Create worksheet for this lot
       const outputWorksheet = outputWorkbook.addWorksheet(lotName);
 
       // Write headers
-      let colNum = 1;
-      for (const [colIdx, header] of Object.entries(headers)) {
-        const cell = outputWorksheet.getCell(1, colNum);
-        cell.value = header;
+      for (let col = 1; col <= maxCol; col++) {
+        const cell = outputWorksheet.getCell(1, col);
+        cell.value = headers[col - 1] || '';
         // @ts-ignore
         cell.fill = headerFill;
         // @ts-ignore
@@ -93,68 +110,62 @@ export async function processSNAExcel(
         cell.alignment = { horizontal: 'middle', vertical: 'middle' };
         // @ts-ignore
         cell.border = border;
-        colNum++;
       }
 
       // Write data rows for this lot
       let currentRow = 2;
+      for (const rowData of lotData) {
+        for (let col = 1; col <= maxCol; col++) {
+          const cell = outputWorksheet.getCell(currentRow, col);
+          cell.value = rowData[col - 1] || null;
 
-      for (const dataRow of lotData) {
-        let colIndex = 1;
-        dataRow.eachCell((cell, colNumber) => {
-          if (colIndex <= numHeaders) {
-            const newCell = outputWorksheet.getCell(currentRow, colIndex);
-            newCell.value = cell.value;
-
-            // Track amounts for subtotals (Column H = 8)
-            if (colIndex === 8 && cell.value) {
-              try {
-                const amount = parseFloat(String(cell.value));
-                if (!isNaN(amount)) {
-                  lotTotal += amount;
-                }
-              } catch (e) {
-                // Skip non-numeric values
+          // Track amounts for subtotals (Column H = 8)
+          if (col === 8 && rowData[col - 1]) {
+            try {
+              const amount = parseFloat(String(rowData[col - 1]));
+              if (!isNaN(amount)) {
+                lotTotal += amount;
               }
+            } catch (e) {
+              // Skip non-numeric values
             }
-
-            newCell.numFmt = cell.numFmt;
-            // @ts-ignore
-            newCell.border = border;
           }
-          colIndex++;
-        });
+
+          // @ts-ignore
+          cell.border = border;
+        }
         currentRow++;
       }
 
       // Write subtotal row
-      const subtotalRow = outputWorksheet.getRow(currentRow);
-      const subtotalCol = subtotalRow.getCell(7);
-      subtotalCol.value = `Subtotal (${lotName}):`;
+      const subtotalRow = currentRow;
+      outputWorksheet.getCell(subtotalRow, 7).value = `Subtotal (${lotName}):`;
       // @ts-ignore
-      subtotalCol.font = subtotalFont;
+      outputWorksheet.getCell(subtotalRow, 7).font = subtotalFont;
       // @ts-ignore
-      subtotalCol.fill = subtotalFill;
+      outputWorksheet.getCell(subtotalRow, 7).fill = subtotalFill;
 
-      const subtotalAmountCol = subtotalRow.getCell(8);
-      subtotalAmountCol.value = lotTotal;
+      outputWorksheet.getCell(subtotalRow, 8).value = lotTotal;
       // @ts-ignore
-      subtotalAmountCol.font = subtotalFont;
+      outputWorksheet.getCell(subtotalRow, 8).font = subtotalFont;
       // @ts-ignore
-      subtotalAmountCol.fill = subtotalFill;
+      outputWorksheet.getCell(subtotalRow, 8).fill = subtotalFill;
 
       // Set column widths
-      for (let i = 1; i <= numHeaders; i++) {
+      for (let i = 1; i <= maxCol; i++) {
         outputWorksheet.getColumn(i).width = 20;
       }
     }
 
+    console.log('💾 Writing output buffer...');
     // Generate output buffer
     // @ts-ignore - exceljs type definitions have issues with Buffer
     const outputBuffer = await outputWorkbook.xlsx.writeBuffer();
+    console.log('✅ Excel processing complete!');
+    
     return Buffer.from(outputBuffer);
   } catch (error) {
-    console.error('Excel processing error:', error);
+    console.error('❌ Excel processing error:', error);
     throw new Error(`Failed to process Excel file: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
