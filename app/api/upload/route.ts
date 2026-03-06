@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processSNAExcel } from '@/lib/excel-processor';
+import { promises as fs } from 'fs';
+import { join } from 'path';
+import os from 'os';
 
 /**
  * POST /api/upload
@@ -41,6 +44,27 @@ export async function POST(req: NextRequest) {
       const processedBase64 = processedBuffer.toString('base64');
 
       console.log(`✅ File processed successfully: ${outputFileName}`);
+
+      // Save processed file to temp directory for download
+      try {
+        const tempDir = join(os.tmpdir(), 'sna-uploads');
+        await fs.mkdir(tempDir, { recursive: true });
+        const tempFilePath = join(tempDir, outputFileName);
+        await fs.writeFile(tempFilePath, processedBuffer);
+        console.log(`💾 Saved to temp: ${tempFilePath}`);
+
+        // Schedule cleanup after 1 hour
+        setTimeout(async () => {
+          try {
+            await fs.unlink(tempFilePath);
+            console.log(`🧹 Cleaned up temp file: ${tempFilePath}`);
+          } catch (e) {
+            console.warn('Failed to cleanup temp file:', e);
+          }
+        }, 3600000); // 1 hour
+      } catch (saveErr) {
+        console.warn('Failed to save temp file:', saveErr);
+      }
 
       // Save to history
       try {
