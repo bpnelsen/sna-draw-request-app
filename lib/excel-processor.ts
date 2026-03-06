@@ -71,11 +71,11 @@ export async function processSNAExcel(
     };
 
     const numHeaders = Object.keys(headers).length;
-    let lotTotal = 0;
 
     // Create a sheet for each lot (sorted alphabetically)
     for (const lotName of Object.keys(dataByLot).sort()) {
       const lotData = dataByLot[lotName];
+      let lotTotal = 0; // Reset for each lot
 
       // Create worksheet for this lot
       const outputWorksheet = outputWorkbook.addWorksheet(lotName);
@@ -98,7 +98,6 @@ export async function processSNAExcel(
 
       // Write data rows for this lot
       let currentRow = 2;
-      lotTotal = 0;
 
       for (const dataRow of lotData) {
         let colIndex = 1;
