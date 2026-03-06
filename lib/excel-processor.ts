@@ -60,7 +60,8 @@ export async function processSNAExcel(
         pattern: 'solid',
         fgColor: { argb: 'FF0F3A7D' }, // Navy blue
       };
-      cell.alignment = { horizontal: 'center', vertical: 'center' };
+      // @ts-ignore - exceljs alignment types are strict
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
     });
 
     // Write data grouped by lot
@@ -90,6 +91,7 @@ export async function processSNAExcel(
           newCell.numFmt = cell.numFmt;
           newCell.font = cell.font;
           newCell.fill = cell.fill;
+          // @ts-ignore - exceljs alignment types are strict
           newCell.alignment = cell.alignment;
         });
         currentRow++;
