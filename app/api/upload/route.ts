@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * POST /api/upload
- * Accepts Excel file upload and queues it to VPS backend for processing
+ * Processes Excel file directly (no VPS backend needed!)
  */
 export async function POST(req: NextRequest) {
   try {
@@ -24,81 +30,102 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Convert file to base64
+    // Convert file to buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    const fileData = buffer.toString('base64');
 
-    // Generate unique filename
+    // Generate unique filenames
     const timestamp = Date.now();
-    const fileName = `${timestamp}_${file.name}`;
+    const inputFileName = `${timestamp}_${file.name}`;
+    const outputFileName = `organized_${inputFileName}`;
 
-    // Get VPS backend URL and API key from environment
-    const vpsBackendUrl = process.env.VPS_BACKEND_URL || 'http://localhost:3001';
-    const apiKey = process.env.SNA_API_KEY || 'default-key';
-
-    // Queue file to VPS backend
-    const callbackUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000'}/api/process-complete`;
+    // Use /tmp for temporary files (works in serverless)
+    const inputPath = `/tmp/${inputFileName}`;
+    const outputPath = `/tmp/${outputFileName}`;
 
     try {
-      const response = await fetch(`${vpsBackendUrl}/process`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
-        },
-        body: JSON.stringify({
-          fileName,
-          fileData,
-          callbackUrl,
-        }),
-      });
+      // Write input file
+      fs.writeFileSync(inputPath, buffer);
+      console.log(`✅ File saved: ${inputPath}`);
 
-      const result = await response.json();
-
-      if (!response.ok) {
+      // Check if Python script exists
+      const scriptPath = '/data/.openclaw/workspace/sna-script/reorganize_sna_draw_request.py';
+      if (!fs.existsSync(scriptPath)) {
         return NextResponse.json(
-          { error: result.error || 'Processing failed' },
+          { error: 'Python processor not found' },
           { status: 500 }
         );
       }
 
-      // Save to history
-      await fetch(new URL('/api/history', req.url), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName,
-          originalFileName: file.name,
-          status: 'completed',
-          downloadUrl: `/api/download/${result.fileName}`,
-        }),
-      }).catch((err) => console.warn('Failed to save history:', err));
+      // Run Python processor
+      console.log(`⏳ Processing: python3 ${scriptPath} "${inputPath}" "${outputPath}"`);
+      
+      try {
+        await execFileAsync('python3', [scriptPath, inputPath, outputPath], {
+          timeout: 30000, // 30 second timeout
+        });
+        
+        console.log(`✅ Processing complete: ${outputPath}`);
 
-      return NextResponse.json({
-        success: true,
-        fileName: result.fileName,
-        downloadUrl: `/api/download/${result.fileName}`,
-        message: 'File processed successfully!',
-        processedData: result.fileData, // Base64 encoded processed file
-      });
-    } catch (backendErr) {
-      console.error('VPS backend error:', backendErr);
+        // Read processed file
+        const processedBuffer = fs.readFileSync(outputPath);
+        const processedBase64 = processedBuffer.toString('base64');
 
-      // Fallback: Return file for local processing
-      return NextResponse.json({
-        success: false,
-        error: 'VPS backend unavailable',
-        message: 'VPS backend is not responding. Please ensure the server is running.',
-        fileName,
-        fileData, // Return file data for debugging
-        note: 'Run the VPS server: node /path/to/server.js',
-      }, { status: 503 });
+        // Save to history
+        try {
+          await fetch(new URL('/api/history', req.url), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: outputFileName,
+              originalFileName: file.name,
+              status: 'completed',
+              downloadUrl: `/api/download/${outputFileName}`,
+            }),
+          });
+        } catch (historyErr) {
+          console.warn('Failed to save history:', historyErr);
+        }
+
+        // Clean up temp files
+        setTimeout(() => {
+          try {
+            fs.unlinkSync(inputPath);
+            fs.unlinkSync(outputPath);
+          } catch (e) {
+            console.warn('Failed to cleanup temp files:', e);
+          }
+        }, 5000);
+
+        return NextResponse.json({
+          success: true,
+          fileName: outputFileName,
+          downloadUrl: `/api/download/${outputFileName}`,
+          message: 'File processed successfully!',
+          processedData: processedBase64,
+        });
+      } catch (pythonErr: any) {
+        console.error('Python execution error:', pythonErr);
+        return NextResponse.json(
+          { 
+            error: 'Processing failed',
+            details: pythonErr.message,
+            stderr: pythonErr.stderr,
+          },
+          { status: 500 }
+        );
+      }
+    } catch (fileErr) {
+      console.error('File operation error:', fileErr);
+      return NextResponse.json(
+        { error: 'File processing error' },
+        { status: 500 }
+      );
     }
   } catch (error) {
     console.error('Upload error:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal server error', details: String(error) },
       { status: 500 }
     );
   }
