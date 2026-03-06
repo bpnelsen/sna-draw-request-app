@@ -11,8 +11,8 @@ export async function processSNAExcel(
   try {
     // Load input workbook
     const workbook = new ExcelJS.Workbook();
-    const uint8Array = new Uint8Array(fileBuffer);
-    await workbook.xlsx.load(uint8Array);
+    // @ts-ignore - exceljs type definitions have issues with Buffer
+    await workbook.xlsx.load(fileBuffer);
     
     const worksheet = workbook.getWorksheet(1);
     if (!worksheet) {
@@ -121,8 +121,9 @@ export async function processSNAExcel(
     });
 
     // Generate output buffer
+    // @ts-ignore - exceljs type definitions have issues with Buffer
     const outputBuffer = await outputWorkbook.xlsx.writeBuffer();
-    return Buffer.from(outputBuffer as any);
+    return Buffer.from(outputBuffer);
   } catch (error) {
     console.error('Excel processing error:', error);
     throw new Error(`Failed to process Excel file: ${error instanceof Error ? error.message : 'Unknown error'}`);
